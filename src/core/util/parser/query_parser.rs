@@ -327,6 +327,15 @@ impl QueryParser {
                     .right_input_stream
                     .get_stream_id_str()
                     .to_string();
+                // Extract aliases for JOIN expressions (e.g., "FROM Stream1 AS a JOIN Stream2 AS b")
+                let left_alias = join_stream
+                    .left_input_stream
+                    .get_stream_reference_id_str()
+                    .map(|s| s.to_string());
+                let right_alias = join_stream
+                    .right_input_stream
+                    .get_stream_reference_id_str()
+                    .map(|s| s.to_string());
                 let left_is_table = table_def_map.contains_key(&left_id);
                 let right_is_table = table_def_map.contains_key(&right_id);
 
@@ -465,10 +474,35 @@ impl QueryParser {
                     let mut right_meta = MetaStreamEvent::new_for_single_input(right_def);
                     right_meta.apply_attribute_offset(left_len);
 
+                    let left_meta_arc = Arc::new(left_meta);
+                    let right_meta_arc = Arc::new(right_meta);
+
                     let mut stream_meta_map = HashMap::new();
-                    stream_meta_map.insert(left_id.clone(), Arc::new(left_meta));
-                    stream_meta_map.insert(right_id.clone(), Arc::new(right_meta));
+                    stream_meta_map.insert(left_id.clone(), Arc::clone(&left_meta_arc));
+                    stream_meta_map.insert(right_id.clone(), Arc::clone(&right_meta_arc));
+                    // Add aliases to stream_meta_map so expressions like "a.symbol" resolve correctly
+                    if let Some(ref alias) = left_alias {
+                        stream_meta_map.insert(alias.clone(), Arc::clone(&left_meta_arc));
+                    }
+                    if let Some(ref alias) = right_alias {
+                        stream_meta_map.insert(alias.clone(), Arc::clone(&right_meta_arc));
+                    }
                     let table_meta_map = HashMap::new();
+
+                    // Build stream_positions map with both stream IDs and aliases
+                    let stream_positions = {
+                        let mut m = HashMap::new();
+                        m.insert(left_id.clone(), 0);
+                        m.insert(right_id.clone(), 1);
+                        // Add aliases to stream_positions for expression parsing
+                        if let Some(ref alias) = left_alias {
+                            m.insert(alias.clone(), 0);
+                        }
+                        if let Some(ref alias) = right_alias {
+                            m.insert(alias.clone(), 1);
+                        }
+                        m
+                    };
 
                     let cond_exec = if let Some(expr) = &join_stream.on_compare {
                         Some(
@@ -482,12 +516,7 @@ impl QueryParser {
                                     window_meta_map: HashMap::new(),
                                     aggregation_meta_map: HashMap::new(),
                                     state_meta_map: HashMap::new(),
-                                    stream_positions: {
-                                        let mut m = HashMap::new();
-                                        m.insert(left_id.clone(), 0);
-                                        m.insert(right_id.clone(), 1);
-                                        m
-                                    },
+                                    stream_positions: stream_positions.clone(),
                                     default_source: left_id.clone(),
                                     query_name: &query_name,
                                 },
@@ -524,12 +553,7 @@ impl QueryParser {
                         window_meta_map: HashMap::new(),
                         aggregation_meta_map: HashMap::new(),
                         state_meta_map: HashMap::new(),
-                        stream_positions: {
-                            let mut m = HashMap::new();
-                            m.insert(left_id.clone(), 0);
-                            m.insert(right_id.clone(), 1);
-                            m
-                        },
+                        stream_positions,
                         default_source: left_id.clone(),
                         query_name: &query_name,
                     }

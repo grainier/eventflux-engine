@@ -575,26 +575,48 @@ impl SqlConverter {
             }
         };
 
+        // Register join aliases in catalog for ON condition expression parsing
+        // This allows expressions like "a.symbol = b.company" where a and b are aliases
+        let effective_catalog: std::borrow::Cow<'_, SqlCatalog> = {
+            let left_alias = left_stream_name.get_stream_reference_id_str();
+            let right_alias = right_stream_name.get_stream_reference_id_str();
+
+            if left_alias.is_some() || right_alias.is_some() {
+                let mut catalog_with_aliases = catalog.clone();
+                if let Some(alias) = left_alias {
+                    let stream_id = left_stream_name.get_stream_id_str();
+                    catalog_with_aliases.register_alias(alias.to_string(), stream_id.to_string());
+                }
+                if let Some(alias) = right_alias {
+                    let stream_id = right_stream_name.get_stream_id_str();
+                    catalog_with_aliases.register_alias(alias.to_string(), stream_id.to_string());
+                }
+                std::borrow::Cow::Owned(catalog_with_aliases)
+            } else {
+                std::borrow::Cow::Borrowed(catalog)
+            }
+        };
+
         // Extract join type and ON condition together
         // Note: In SQL, plain JOIN and INNER JOIN are identical (ANSI standard),
         // so we normalize them to InnerJoin for consistency
         let (join_type, on_condition) = match &join.join_operator {
             // INNER JOIN variants (normalize plain JOIN to INNER JOIN)
             JoinOperator::Join(constraint) | JoinOperator::Inner(constraint) => {
-                let cond = Self::extract_on_condition(constraint, catalog)?;
+                let cond = Self::extract_on_condition(constraint, &effective_catalog)?;
                 (JoinType::InnerJoin, cond)
             }
             // OUTER JOIN variants
             JoinOperator::LeftOuter(constraint) => {
-                let cond = Self::extract_on_condition(constraint, catalog)?;
+                let cond = Self::extract_on_condition(constraint, &effective_catalog)?;
                 (JoinType::LeftOuterJoin, cond)
             }
             JoinOperator::RightOuter(constraint) => {
-                let cond = Self::extract_on_condition(constraint, catalog)?;
+                let cond = Self::extract_on_condition(constraint, &effective_catalog)?;
                 (JoinType::RightOuterJoin, cond)
             }
             JoinOperator::FullOuter(constraint) => {
-                let cond = Self::extract_on_condition(constraint, catalog)?;
+                let cond = Self::extract_on_condition(constraint, &effective_catalog)?;
                 (JoinType::FullOuterJoin, cond)
             }
             _ => {
