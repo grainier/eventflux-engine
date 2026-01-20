@@ -146,3 +146,5 @@ website/build/
 website/.cache-loader/
 website/.npm/
 research/
+GEMINI.md
+/.gemini/
